@@ -25,11 +25,13 @@
 package uvma_interrupt_pkg;
 
    import uvm_pkg       ::*;
+   import uvml_mem_pkg::*;
    import uvml_hrtbt_pkg::*;
    import uvml_trn_pkg  ::*;
    import uvml_logs_pkg ::*;
 
-   parameter NUM_IRQ = 3;
+   parameter XLEN = 32;
+   parameter int MAX_ADDR_WIDTH    = `UVMA_AXI_ADDR_MAX_WIDTH    ; // subjective maximum
 
    // Constants / Structs / Enums
    `include "uvma_interrupt_constants.sv"
@@ -48,7 +50,7 @@ package uvma_interrupt_pkg;
    `include "uvma_interrupt_drv.sv"
    `include "uvma_interrupt_sqr.sv"
    `include "uvma_interrupt_agent.sv"
-   
+
    // Sequences
    `include "uvma_interrupt_base_seq.sv"
    `include "uvma_interrupt_seq.sv"

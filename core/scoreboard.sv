@@ -17,89 +17,76 @@ module scoreboard #(
     parameter type bp_resolve_t = logic,
     parameter type exception_t = logic,
     parameter type scoreboard_entry_t = logic,
+    parameter type forwarding_t = logic,
+    parameter type writeback_t = logic,
     parameter type rs3_len_t = logic
 ) (
     // Subsystem Clock - SUBSYSTEM
-    input logic clk_i,
+    input  logic                                          clk_i,
     // Asynchronous reset active low - SUBSYSTEM
-    input logic rst_ni,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
-    output logic sb_full_o,
-    // Flush only un-issued instructions - TO_BE_COMPLETED
-    input logic flush_unissued_instr_i,
-    // Flush whole scoreboard - TO_BE_COMPLETED
-    input logic flush_i,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
-    output ariane_pkg::fu_t [2**ariane_pkg::REG_ADDR_SIZE-1:0] rd_clobber_gpr_o,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
-    output ariane_pkg::fu_t [2**ariane_pkg::REG_ADDR_SIZE-1:0] rd_clobber_fpr_o,
-
-    // rs1 operand address - issue_read_operands
-    input  logic [CVA6Cfg.NrIssuePorts-1:0][ariane_pkg::REG_ADDR_SIZE-1:0] rs1_i,
-    // rs1 operand - issue_read_operands
-    output logic [CVA6Cfg.NrIssuePorts-1:0][             CVA6Cfg.XLEN-1:0] rs1_o,
-    // rs1 operand is valid - issue_read_operands
-    output logic [CVA6Cfg.NrIssuePorts-1:0]                                rs1_valid_o,
-
-    // rs2 operand address - issue_read_operands
-    input  logic [CVA6Cfg.NrIssuePorts-1:0][ariane_pkg::REG_ADDR_SIZE-1:0] rs2_i,
-    // rs2 operand - issue_read_operands
-    output logic [CVA6Cfg.NrIssuePorts-1:0][             CVA6Cfg.XLEN-1:0] rs2_o,
-    // rs2 operand is valid - issue_read_operands
-    output logic [CVA6Cfg.NrIssuePorts-1:0]                                rs2_valid_o,
-
-    // rs3 operand address - issue_read_operands
-    input  logic     [CVA6Cfg.NrIssuePorts-1:0][ariane_pkg::REG_ADDR_SIZE-1:0] rs3_i,
-    // rs3 operand - issue_read_operands
-    output rs3_len_t [CVA6Cfg.NrIssuePorts-1:0]                                rs3_o,
-    // rs3 operand is valid - issue_read_operands
-    output logic     [CVA6Cfg.NrIssuePorts-1:0]                                rs3_valid_o,
-
+    input  logic                                          rst_ni,
+    // Is scoreboard full - PERF_COUNTERS
+    output logic                                          sb_full_o,
+    // Prevent from issuing - CONTROLLER
+    input  logic                                          flush_unissued_instr_i,
+    // Flush whole scoreboard - CONTROLLER
+    input  logic                                          flush_i,
+    // Writeback Handling of CVXIF
+    // TO_BE_COMPLETED - ISSUE_READ_OPERANDS
+    input  logic                                          x_transaction_accepted_i,
+    // TO_BE_COMPLETED - ISSUE_READ_OPERANDS
+    input  logic                                          x_issue_writeback_i,
+    // TO_BE_COMPLETED - ISSUE_READ_OPERANDS
+    input  logic              [CVA6Cfg.TRANS_ID_BITS-1:0] x_id_i,
     // advertise instruction to commit stage, if commit_ack_i is asserted advance the commit pointer
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Instructions to commit - COMMIT_STAGE
     output scoreboard_entry_t [CVA6Cfg.NrCommitPorts-1:0] commit_instr_o,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Instruction is cancelled - COMMIT_STAGE
     output logic              [CVA6Cfg.NrCommitPorts-1:0] commit_drop_o,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Commit acknowledge - COMMIT_STAGE
     input  logic              [CVA6Cfg.NrCommitPorts-1:0] commit_ack_i,
 
     // instruction to put on top of scoreboard e.g.: top pointer
     // we can always put this instruction to the top unless we signal with asserted full_o
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Handshake's data with decode stage - ID_STAGE
     input  scoreboard_entry_t [CVA6Cfg.NrIssuePorts-1:0]       decoded_instr_i,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // instruction value - ID_STAGE
     input  logic              [CVA6Cfg.NrIssuePorts-1:0][31:0] orig_instr_i,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Handshake's valid with decode stage - ID_STAGE
     input  logic              [CVA6Cfg.NrIssuePorts-1:0]       decoded_instr_valid_i,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Handshake's acknowlege with decode stage - ID_STAGE
     output logic              [CVA6Cfg.NrIssuePorts-1:0]       decoded_instr_ack_o,
 
     // instruction to issue logic, if issue_instr_valid and issue_ready is asserted, advance the issue pointer
-    // Issue scoreboard entry - ACC_DISPATCHER
+    // Entry about the instruction to issue - ISSUE_READ_OPERANDS
     output scoreboard_entry_t [CVA6Cfg.NrIssuePorts-1:0]       issue_instr_o,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Instruction to issue - ISSUE_READ_OPERANDS
     output logic              [CVA6Cfg.NrIssuePorts-1:0][31:0] orig_instr_o,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Is there an instruction to issue - ISSUE_READ_OPERANDS
     output logic              [CVA6Cfg.NrIssuePorts-1:0]       issue_instr_valid_o,
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Issue stage acknowledge - ISSUE_READ_OPERANDS
     input  logic              [CVA6Cfg.NrIssuePorts-1:0]       issue_ack_i,
+    // Forwarding - ISSUE_READ_OPERANDS
+    output forwarding_t                                        fwd_o,
 
-    // TO_BE_COMPLETED - TO_BE_COMPLETED
+    // Result from branch unit - EX_STAGE
     input bp_resolve_t resolved_branch_i,
-    // Transaction ID at which to write the result back - TO_BE_COMPLETED
+    // Transaction ID at which to write the result back - EX_STAGE
     input logic [CVA6Cfg.NrWbPorts-1:0][CVA6Cfg.TRANS_ID_BITS-1:0] trans_id_i,
-    // Results to write back - TO_BE_COMPLETED
+    // Results to write back - EX_STAGE
     input logic [CVA6Cfg.NrWbPorts-1:0][CVA6Cfg.XLEN-1:0] wbdata_i,
-    // Exception from a functional unit (e.g.: ld/st exception) - TO_BE_COMPLETED
+    // Exception from a functional unit (e.g.: ld/st exception) - EX_STAGE
     input exception_t [CVA6Cfg.NrWbPorts-1:0] ex_i,
-    // Indicates valid results - TO_BE_COMPLETED
+    // Indicates valid results - EX_STAGE
     input logic [CVA6Cfg.NrWbPorts-1:0] wt_valid_i,
-    // Cvxif we for writeback - TO_BE_COMPLETED
+    // Cvxif we for writeback - EX_STAGE
     input logic x_we_i,
+    // CVXIF destination register - ISSUE_STAGE
+    input logic [4:0] x_rd_i,
 
-    // TO_BE_COMPLETED - RVFI
+    // Issue pointer - RVFI
     output logic [ CVA6Cfg.NrIssuePorts-1:0][CVA6Cfg.TRANS_ID_BITS-1:0] rvfi_issue_pointer_o,
-    // TO_BE_COMPLETED - RVFI
+    // Commit pointer - RVFI
     output logic [CVA6Cfg.NrCommitPorts-1:0][CVA6Cfg.TRANS_ID_BITS-1:0] rvfi_commit_pointer_o
 );
 
@@ -161,9 +148,8 @@ module scoreboard #(
 
   // an instruction is ready for issue if we have place in the issue FIFO and it the decoder says it is valid
   always_comb begin
-    decoded_instr_ack_o = '0;
-    issue_instr_o       = decoded_instr_i;
-    orig_instr_o        = orig_instr_i;
+    issue_instr_o = decoded_instr_i;
+    orig_instr_o  = orig_instr_i;
     for (int unsigned i = 0; i < CVA6Cfg.NrIssuePorts; i++) begin
       // make sure we assign the correct trans ID
       issue_instr_o[i].trans_id = issue_pointer[i];
@@ -225,8 +211,9 @@ module scoreboard #(
         if (CVA6Cfg.DebugEn) begin
           mem_n[trans_id_i[i]].sbe.bp.predict_address = resolved_branch_i.target_address;
         end
-        if (mem_n[trans_id_i[i]].sbe.fu == ariane_pkg::CVXIF && ~x_we_i) begin
-          mem_n[trans_id_i[i]].sbe.rd = 5'b0;
+        if (mem_n[trans_id_i[i]].sbe.fu == ariane_pkg::CVXIF) begin
+          if (x_we_i) mem_n[trans_id_i[i]].sbe.rd = x_rd_i;
+          else mem_n[trans_id_i[i]].sbe.rd = 5'b0;
         end
         // write the exception back if it is valid
         if (ex_i[i].valid) mem_n[trans_id_i[i]].sbe.ex = ex_i[i];
@@ -242,10 +229,8 @@ module scoreboard #(
     // ------------
     if (CVA6Cfg.SpeculativeSb) begin
       if (bmiss) begin
-        for (int unsigned i = 0; i < CVA6Cfg.NR_SB_ENTRIES; i++) begin
-          if (speculative_instrs[i]) begin
-            mem_n[i].cancelled = 1'b1;
-          end
+        if (after_flu_wb != issue_pointer[0]) begin
+          mem_n[after_flu_wb].cancelled = 1'b1;
         end
       end
     end
@@ -280,16 +265,6 @@ module scoreboard #(
   assign bmiss = resolved_branch_i.valid && resolved_branch_i.is_mispredict;
   assign after_flu_wb = trans_id_i[ariane_pkg::FLU_WB] + 'd1;
 
-  if (CVA6Cfg.SpeculativeSb) begin : find_speculative_instrs
-    round_interval #(
-        .S(CVA6Cfg.TRANS_ID_BITS)
-    ) i_speculative_instrs (
-        .start_i (after_flu_wb),
-        .stop_i  (issue_pointer_q),
-        .active_o(speculative_instrs)
-    );
-  end
-
   // FIFO counter updates
   if (CVA6Cfg.NrCommitPorts == 2) begin : gen_commit_ports
     assign num_commit = commit_ack_i[1] + commit_ack_i[0];
@@ -309,193 +284,21 @@ module scoreboard #(
     assign commit_pointer_n[k] = (flush_i) ? '0 : commit_pointer_n[0] + unsigned'(k);
   end
 
-  // -------------------
-  // RD clobber process
-  // -------------------
-  // rd_clobber output: output currently clobbered destination registers
-  logic            [2**ariane_pkg::REG_ADDR_SIZE-1:0][CVA6Cfg.NR_SB_ENTRIES:0] gpr_clobber_vld;
-  logic            [2**ariane_pkg::REG_ADDR_SIZE-1:0][CVA6Cfg.NR_SB_ENTRIES:0] fpr_clobber_vld;
-  ariane_pkg::fu_t [         CVA6Cfg.NR_SB_ENTRIES:0]                          clobber_fu;
-
-  always_comb begin : clobber_assign
-    gpr_clobber_vld = '0;
-    fpr_clobber_vld = '0;
-
-    // default (highest entry hast lowest prio in arbiter tree below)
-    clobber_fu[CVA6Cfg.NR_SB_ENTRIES] = ariane_pkg::NONE;
-    for (int unsigned i = 0; i < 2 ** ariane_pkg::REG_ADDR_SIZE; i++) begin
-      gpr_clobber_vld[i][CVA6Cfg.NR_SB_ENTRIES] = 1'b1;
-      fpr_clobber_vld[i][CVA6Cfg.NR_SB_ENTRIES] = 1'b1;
-    end
-
-    // check for all valid entries and set the clobber accordingly
-    for (int unsigned i = 0; i < CVA6Cfg.NR_SB_ENTRIES; i++) begin
-      gpr_clobber_vld[mem_q[i].sbe.rd][i] = still_issued[i] & ~mem_q[i].is_rd_fpr_flag;
-      fpr_clobber_vld[mem_q[i].sbe.rd][i] = still_issued[i] & mem_q[i].is_rd_fpr_flag;
-      clobber_fu[i]                       = mem_q[i].sbe.fu;
-    end
-
-    // GPR[0] is always free
-    gpr_clobber_vld[0] = '0;
+  // Forwarding logic
+  writeback_t [CVA6Cfg.NrWbPorts-1:0] wb;
+  for (genvar i = 0; i < CVA6Cfg.NrWbPorts; i++) begin
+    assign wb[i].valid = wt_valid_i[i];
+    assign wb[i].data = wbdata_i[i];
+    assign wb[i].ex_valid = ex_i[i].valid;
+    assign wb[i].trans_id = trans_id_i[i];
   end
 
-  for (genvar k = 0; k < 2 ** ariane_pkg::REG_ADDR_SIZE; k++) begin : gen_sel_clobbers
-    // get fu that is going to clobber this register (there should be only one)
-    rr_arb_tree #(
-        .NumIn(CVA6Cfg.NR_SB_ENTRIES + 1),
-        .DataType(ariane_pkg::fu_t),
-        .ExtPrio(1'b1),
-        .AxiVldRdy(1'b1)
-    ) i_sel_gpr_clobbers (
-        .clk_i  (clk_i),
-        .rst_ni (rst_ni),
-        .flush_i(1'b0),
-        .rr_i   ('0),
-        .req_i  (gpr_clobber_vld[k]),
-        .gnt_o  (),
-        .data_i (clobber_fu),
-        .gnt_i  (1'b1),
-        .req_o  (),
-        .data_o (rd_clobber_gpr_o[k]),
-        .idx_o  ()
-    );
-    if (CVA6Cfg.FpPresent) begin
-      rr_arb_tree #(
-          .NumIn(CVA6Cfg.NR_SB_ENTRIES + 1),
-          .DataType(ariane_pkg::fu_t),
-          .ExtPrio(1'b1),
-          .AxiVldRdy(1'b1)
-      ) i_sel_fpr_clobbers (
-          .clk_i  (clk_i),
-          .rst_ni (rst_ni),
-          .flush_i(1'b0),
-          .rr_i   ('0),
-          .req_i  (fpr_clobber_vld[k]),
-          .gnt_o  (),
-          .data_i (clobber_fu),
-          .gnt_i  (1'b1),
-          .req_o  (),
-          .data_o (rd_clobber_fpr_o[k]),
-          .idx_o  ()
-      );
-    end
+  assign fwd_o.still_issued = still_issued;
+  assign fwd_o.issue_pointer = issue_pointer;
+  assign fwd_o.wb = wb;
+  for (genvar i = 0; i < CVA6Cfg.NR_SB_ENTRIES; i++) begin
+    assign fwd_o.sbe[i] = mem_q[i].sbe;
   end
-
-  // ----------------------------------
-  // Read Operands (a.k.a forwarding)
-  // ----------------------------------
-  // read operand interface: same logic as register file
-  logic [CVA6Cfg.NrIssuePorts-1:0][CVA6Cfg.NR_SB_ENTRIES+CVA6Cfg.NrWbPorts-1:0]
-      rs1_fwd_req, rs2_fwd_req, rs3_fwd_req;
-  logic [CVA6Cfg.NrIssuePorts-1:0][CVA6Cfg.NR_SB_ENTRIES+CVA6Cfg.NrWbPorts-1:0][CVA6Cfg.XLEN-1:0] rs_data;
-  logic [CVA6Cfg.NrIssuePorts-1:0] rs1_valid, rs2_valid, rs3_valid;
-
-  // WB ports have higher prio than entries
-  for (genvar i = 0; i < CVA6Cfg.NrIssuePorts; i++) begin
-    for (genvar k = 0; unsigned'(k) < CVA6Cfg.NrWbPorts; k++) begin : gen_rs_wb
-      assign rs1_fwd_req[i][k] = (mem_q[trans_id_i[k]].sbe.rd == rs1_i[i]) & (~mem_q[trans_id_i[k]].cancelled) & wt_valid_i[k] & (~ex_i[k].valid) & (mem_q[trans_id_i[k]].is_rd_fpr_flag == (CVA6Cfg.FpPresent && ariane_pkg::is_rs1_fpr(
-          issue_instr_o[i].op
-      )));
-      assign rs2_fwd_req[i][k] = (mem_q[trans_id_i[k]].sbe.rd == rs2_i[i]) & (~mem_q[trans_id_i[k]].cancelled) & wt_valid_i[k] & (~ex_i[k].valid) & (mem_q[trans_id_i[k]].is_rd_fpr_flag == (CVA6Cfg.FpPresent && ariane_pkg::is_rs2_fpr(
-          issue_instr_o[i].op
-      )));
-      assign rs3_fwd_req[i][k] = (mem_q[trans_id_i[k]].sbe.rd == rs3_i[i]) & (~mem_q[trans_id_i[k]].cancelled) & wt_valid_i[k] & (~ex_i[k].valid) & (mem_q[trans_id_i[k]].is_rd_fpr_flag == (CVA6Cfg.FpPresent && ariane_pkg::is_imm_fpr(
-          issue_instr_o[i].op
-      )));
-      assign rs_data[i][k] = wbdata_i[k];
-    end
-    for (genvar k = 0; unsigned'(k) < CVA6Cfg.NR_SB_ENTRIES; k++) begin : gen_rs_entries
-      assign rs1_fwd_req[i][k+CVA6Cfg.NrWbPorts] = (mem_q[k].sbe.rd == rs1_i[i]) & still_issued[k] & mem_q[k].sbe.valid & (mem_q[k].is_rd_fpr_flag == (CVA6Cfg.FpPresent && ariane_pkg::is_rs1_fpr(
-          issue_instr_o[i].op
-      )));
-      assign rs2_fwd_req[i][k+CVA6Cfg.NrWbPorts] = (mem_q[k].sbe.rd == rs2_i[i]) & still_issued[k] & mem_q[k].sbe.valid & (mem_q[k].is_rd_fpr_flag == (CVA6Cfg.FpPresent && ariane_pkg::is_rs2_fpr(
-          issue_instr_o[i].op
-      )));
-      assign rs3_fwd_req[i][k+CVA6Cfg.NrWbPorts] = (mem_q[k].sbe.rd == rs3_i[i]) & still_issued[k] & mem_q[k].sbe.valid & (mem_q[k].is_rd_fpr_flag == (CVA6Cfg.FpPresent && ariane_pkg::is_imm_fpr(
-          issue_instr_o[i].op
-      )));
-      assign rs_data[i][k+CVA6Cfg.NrWbPorts] = mem_q[k].sbe.result;
-    end
-
-    // check whether we are accessing GPR[0]
-    assign rs1_valid_o[i] = rs1_valid[i] & ((|rs1_i[i]) | (CVA6Cfg.FpPresent && ariane_pkg::is_rs1_fpr(
-        issue_instr_o[i].op
-    )));
-    assign rs2_valid_o[i] = rs2_valid[i] & ((|rs2_i[i]) | (CVA6Cfg.FpPresent && ariane_pkg::is_rs2_fpr(
-        issue_instr_o[i].op
-    )));
-    assign rs3_valid_o[i] = CVA6Cfg.NrRgprPorts == 3 ? rs3_valid[i] & ((|rs3_i[i]) | (CVA6Cfg.FpPresent && ariane_pkg::is_imm_fpr(
-        issue_instr_o[i].op
-    ))) : rs3_valid[i];
-
-    // use fixed prio here
-    // this implicitly gives higher prio to WB ports
-    rr_arb_tree #(
-        .NumIn(CVA6Cfg.NR_SB_ENTRIES + CVA6Cfg.NrWbPorts),
-        .DataWidth(CVA6Cfg.XLEN),
-        .ExtPrio(1'b1),
-        .AxiVldRdy(1'b1)
-    ) i_sel_rs1 (
-        .clk_i  (clk_i),
-        .rst_ni (rst_ni),
-        .flush_i(1'b0),
-        .rr_i   ('0),
-        .req_i  (rs1_fwd_req[i]),
-        .gnt_o  (),
-        .data_i (rs_data[i]),
-        .gnt_i  (1'b1),
-        .req_o  (rs1_valid[i]),
-        .data_o (rs1_o[i]),
-        .idx_o  ()
-    );
-
-    rr_arb_tree #(
-        .NumIn(CVA6Cfg.NR_SB_ENTRIES + CVA6Cfg.NrWbPorts),
-        .DataWidth(CVA6Cfg.XLEN),
-        .ExtPrio(1'b1),
-        .AxiVldRdy(1'b1)
-    ) i_sel_rs2 (
-        .clk_i  (clk_i),
-        .rst_ni (rst_ni),
-        .flush_i(1'b0),
-        .rr_i   ('0),
-        .req_i  (rs2_fwd_req[i]),
-        .gnt_o  (),
-        .data_i (rs_data[i]),
-        .gnt_i  (1'b1),
-        .req_o  (rs2_valid[i]),
-        .data_o (rs2_o[i]),
-        .idx_o  ()
-    );
-
-    logic [CVA6Cfg.NrIssuePorts-1:0][CVA6Cfg.XLEN-1:0] rs3;
-
-    rr_arb_tree #(
-        .NumIn(CVA6Cfg.NR_SB_ENTRIES + CVA6Cfg.NrWbPorts),
-        .DataWidth(CVA6Cfg.XLEN),
-        .ExtPrio(1'b1),
-        .AxiVldRdy(1'b1)
-    ) i_sel_rs3 (
-        .clk_i  (clk_i),
-        .rst_ni (rst_ni),
-        .flush_i(1'b0),
-        .rr_i   ('0),
-        .req_i  (rs3_fwd_req[i]),
-        .gnt_o  (),
-        .data_i (rs_data[i]),
-        .gnt_i  (1'b1),
-        .req_o  (rs3_valid[i]),
-        .data_o (rs3[i]),
-        .idx_o  ()
-    );
-
-    if (CVA6Cfg.NrRgprPorts == 3) begin : gen_gp_three_port
-      assign rs3_o[i] = rs3[i][riscv::XLEN-1:0];
-    end else begin : gen_fp_three_port
-      assign rs3_o[i] = rs3[i][CVA6Cfg.FLen-1:0];
-    end
-  end
-
 
   // sequential process
   always_ff @(posedge clk_i or negedge rst_ni) begin : regs
@@ -504,8 +307,9 @@ module scoreboard #(
       commit_pointer_q <= '0;
       issue_pointer_q  <= '0;
     end else begin
-      issue_pointer_q  <= issue_pointer_n;
-      mem_q            <= mem_n;
+      issue_pointer_q <= issue_pointer_n;
+      mem_q <= mem_n;
+      mem_q[x_id_i].sbe.rd <= (x_transaction_accepted_i && ~x_issue_writeback_i) ? 5'b0 : mem_n[x_id_i].sbe.rd;
       commit_pointer_q <= commit_pointer_n;
     end
   end
@@ -519,10 +323,6 @@ module scoreboard #(
     assert (CVA6Cfg.NR_SB_ENTRIES == 2 ** CVA6Cfg.TRANS_ID_BITS)
     else $fatal(1, "Scoreboard size needs to be a power of two.");
   end
-
-  // assert that zero is never set
-  assert property (@(posedge clk_i) disable iff (!rst_ni) (rd_clobber_gpr_o[0] == ariane_pkg::NONE))
-  else $fatal(1, "RD 0 should not bet set");
   // assert that we never acknowledge a commit if the instruction is not valid
   assert property (
     @(posedge clk_i) disable iff (!rst_ni) commit_ack_i[0] |-> commit_instr_o[0].valid)

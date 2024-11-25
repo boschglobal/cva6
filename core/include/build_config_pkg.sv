@@ -32,7 +32,7 @@ package build_config_pkg;
     config_pkg::cva6_cfg_t cfg;
 
     cfg.XLEN = CVA6Cfg.XLEN;
-    cfg.VLEN = (CVA6Cfg.XLEN == 32) ? 32 : 64;
+    cfg.VLEN = CVA6Cfg.VLEN;
     cfg.PLEN = (CVA6Cfg.XLEN == 32) ? 34 : 56;
     cfg.GPLEN = (CVA6Cfg.XLEN == 32) ? 34 : 41;
     cfg.IS_XLEN32 = IS_XLEN32;
@@ -42,6 +42,7 @@ package build_config_pkg;
     cfg.VMID_WIDTH = (CVA6Cfg.XLEN == 64) ? 14 : 1;
 
     cfg.FpgaEn = CVA6Cfg.FpgaEn;
+    cfg.FpgaAlteraEn = CVA6Cfg.FpgaAlteraEn;
     cfg.TechnoCut = CVA6Cfg.TechnoCut;
 
     cfg.SuperscalarEn = CVA6Cfg.SuperscalarEn;
@@ -84,7 +85,9 @@ package build_config_pkg;
     cfg.XF16Vec = bit'(XF16Vec);
     cfg.XF16ALTVec = bit'(XF16ALTVec);
     cfg.XF8Vec = bit'(XF8Vec);
+    // Can take 2 or 3 in single issue. 4 or 6 in dual issue.
     cfg.NrRgprPorts = unsigned'(CVA6Cfg.SuperscalarEn ? 4 : 2);
+    // cfg.NrRgprPorts = unsigned'(CVA6Cfg.SuperscalarEn ? 6 : 3);
     cfg.NrWbPorts = unsigned'(NrWbPorts);
     cfg.EnableAccelerator = bit'(EnableAccelerator);
     cfg.PerfCounterEn = CVA6Cfg.PerfCounterEn;
@@ -120,7 +123,7 @@ package build_config_pkg;
     cfg.AxiBurstWriteEn = CVA6Cfg.AxiBurstWriteEn;
 
     cfg.ICACHE_SET_ASSOC = CVA6Cfg.IcacheSetAssoc;
-    cfg.ICACHE_SET_ASSOC_WIDTH = $clog2(CVA6Cfg.IcacheSetAssoc);
+    cfg.ICACHE_SET_ASSOC_WIDTH = CVA6Cfg.IcacheSetAssoc > 1 ? $clog2(CVA6Cfg.IcacheSetAssoc) : CVA6Cfg.IcacheSetAssoc;
     cfg.ICACHE_INDEX_WIDTH = ICACHE_INDEX_WIDTH;
     cfg.ICACHE_TAG_WIDTH = cfg.PLEN - ICACHE_INDEX_WIDTH;
     cfg.ICACHE_LINE_WIDTH = CVA6Cfg.IcacheLineWidth;
@@ -128,7 +131,7 @@ package build_config_pkg;
     cfg.DCacheType = CVA6Cfg.DCacheType;
     cfg.DcacheIdWidth = CVA6Cfg.DcacheIdWidth;
     cfg.DCACHE_SET_ASSOC = CVA6Cfg.DcacheSetAssoc;
-    cfg.DCACHE_SET_ASSOC_WIDTH = $clog2(CVA6Cfg.DcacheSetAssoc);
+    cfg.DCACHE_SET_ASSOC_WIDTH = CVA6Cfg.DcacheSetAssoc > 1 ? $clog2(CVA6Cfg.DcacheSetAssoc) : CVA6Cfg.DcacheSetAssoc;
     cfg.DCACHE_INDEX_WIDTH = DCACHE_INDEX_WIDTH;
     cfg.DCACHE_TAG_WIDTH = cfg.PLEN - DCACHE_INDEX_WIDTH;
     cfg.DCACHE_LINE_WIDTH = CVA6Cfg.DcacheLineWidth;
@@ -164,6 +167,16 @@ package build_config_pkg;
     cfg.SharedTlbDepth = CVA6Cfg.SharedTlbDepth;
     cfg.VpnLen = VpnLen;
     cfg.PtLevels = PtLevels;
+
+    cfg.X_NUM_RS = cfg.NrRgprPorts / cfg.NrIssuePorts;
+    cfg.X_ID_WIDTH = cfg.TRANS_ID_BITS;
+    cfg.X_RFR_WIDTH = cfg.XLEN;
+    cfg.X_RFW_WIDTH = cfg.XLEN;
+    cfg.X_NUM_HARTS = 1;
+    cfg.X_HARTID_WIDTH = cfg.XLEN;
+    cfg.X_DUALREAD = 0;
+    cfg.X_DUALWRITE = 0;
+    cfg.X_ISSUE_REGISTER_SPLIT = 0;
 
     return cfg;
   endfunction

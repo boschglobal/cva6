@@ -794,7 +794,7 @@ ifndef::archi-default,MTvalEn-true[]
 [{ohg-config}] The `stval` register is an MXLEN-bit read-only 0 register.
 endif::[]
 
-
+[[sec:senvcfg]]
 ==== Supervisor Environment Configuration (`senvcfg`) Register 
 
 The `senvcfg` CSR is an SXLEN-bit read/write register, formatted as
@@ -908,17 +908,12 @@ enabled.
 endif::[]
 
 ifdef::archi-default[]
-The definition of the CBZE field will be furnished by the forthcoming
-Zicboz extension. Its allocation within `senvcfg` may change prior to
-the ratification of that extension.
+The definition of the CBZE field is furnished by the Zicboz extension.
 
-The definitions of the CBCFE and CBIE fields will be furnished by the
-forthcoming Zicbom extension. Their allocations within `senvcfg` may
-change prior to the ratification of that extension.
+The definitions of the CBCFE and CBIE fields are furnished by the Zicbom
+extension.
 
-The definition of the PMM field will be furnished by the forthcoming
-Ssnpm extension. Its allocation within `senvcfg` may change prior to the
-ratification of that extension.
+The definition of the PMM field is furnished by the Ssnpm extension.
 
 The Zicfilp extension adds the `LPE` field in `senvcfg`. When the `LPE` field is
 set to 1, the Zicfilp extension is enabled in VU/U-mode. When the `LPE` field is
@@ -1273,13 +1268,6 @@ integer register _rs2_, except for entries containing global mappings.
 If the value held in _rs1_ is not a valid virtual address, then the
 SFENCE.VMA instruction has no effect. No exception is raised in this
 case.
-
-When __rs2__&#8800;``x0``, bits SXLEN-1:ASIDMAX of the value held
-in _rs2_ are reserved for future standard use. Until their use is
-defined by a standard extension, they should be zeroed by software and
-ignored by current implementations. Furthermore, if
-ASIDLEN<ASIDMAX, the implementation shall ignore bits
-ASIDMAX-1:ASIDLEN of the value held in _rs2_.
 endif::[]
 
 ifeval::[{note} == true]
@@ -1296,6 +1284,13 @@ in _rs1_ facilitates this type of simplification.
 endif::[]
 
 ifdef::archi-default[]
+When __rs2__&#8800;``x0``, bits SXLEN-1:ASIDMAX of the value held
+in _rs2_ are reserved for future standard use. Until their use is
+defined by a standard extension, they should be zeroed by software and
+ignored by current implementations. Furthermore, if
+ASIDLEN<ASIDMAX, the implementation shall ignore bits
+ASIDMAX-1:ASIDLEN of the value held in _rs2_.
+
 An implicit read of the memory-management data structures may return any
 translation for an address that was valid at any time since the most
 recent SFENCE.VMA that subsumes that address. The ordering implied by
@@ -1357,7 +1352,7 @@ Likewise, changes to `satp`.ASID take effect immediately.
 endif::[]
 
 ifeval::[{note} == true]
-[TIP]
+[NOTE]
 ====
 The following common situations typically require executing an
 SFENCE.VMA instruction:
@@ -1646,8 +1641,9 @@ Two schemes to manage the A and D bits are defined:
   architecturally. However, updates to the D bit, resulting from an
   explicit store, must be exact (i.e., non-speculative), and observed in
   program order by the local hart. When two-stage address translation is
-  active, updates of the D bit in G-stage PTEs may be performed as a
-  result of speculative updates of the A bit in VS-stage PTEs.          +
+  active, updates to the D bit in G-stage PTEs may be performed by an
+  implicit access to a VS-stage PTE, if the G-stage PTE provides write
+  permission, before any speculative access to the VS-stage PTE.        +
                                                                         +
   The PTE update must appear in the global memory order before the
   memory access that caused the PTE update and before any subsequent
@@ -2478,6 +2474,11 @@ Second, if `vsatp`.MODE is not equal to zero, non-zero VS-stage PTE PBMT
 bits override the intermediate attributes to produce the final set of
 attributes used by accesses to the page in question. Otherwise, the
 intermediate attributes are used as the final set of attributes.
+
+NOTE: These final attributes apply to implicit and explicit accesses that
+are subject to both stages of address translation.
+For accesses that are not subject to the first stage of address translation,
+e.g. VS-stage page-table accesses, the intermediate attributes apply instead.
 endif::[]
 
 ifdef::archi-default[]

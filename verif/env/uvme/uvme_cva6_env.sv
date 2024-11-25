@@ -42,7 +42,6 @@ class uvme_cva6_env_c extends uvm_env;
 
    // Agents
    uvma_clknrst_agent_c   clknrst_agent;
-   uvma_cvxif_agent_c     cvxif_agent;
    uvma_axi_agent_c       axi_agent;
    uvma_cva6_core_cntrl_agent_c core_cntrl_agent;
    uvma_rvfi_agent_c#(ILEN,XLEN)      rvfi_agent;
@@ -51,6 +50,9 @@ class uvme_cva6_env_c extends uvm_env;
 
    // Handle to agent switch interface
    virtual uvmt_axi_switch_intf  axi_switch_vif;
+
+   // Handle to debug_req interface
+   virtual uvma_debug_if  debug_vif;
 
    //CSR register model
    cva6_csr_reg_block                             csr_reg_block;
@@ -161,16 +163,10 @@ function void uvme_cva6_env_c::build_phase(uvm_phase phase);
       `uvm_fatal("CFG", "Configuration handle is null")
    end
    else begin
-      `uvm_info("CFG", $sformatf("Found configuration handle:\n%s", cfg.sprint()), UVM_DEBUG)
+      `uvm_info("CFG", $sformatf("Found configuration handle:\n%s", cfg.sprint()), UVM_NONE)
    end
 
-   void'(uvm_config_db#(cva6_cfg_t)::get(this, "", "CVA6Cfg", cfg.CVA6Cfg));
-   if (!cfg.CVA6Cfg) begin
-      `uvm_fatal("CVA6Cfg", "RTL Configuration handle is null")
-   end
-   else begin
-      `uvm_info("CVA6Cfg", $sformatf("Found RTL configuration handle:\n%p", cfg.CVA6Cfg), UVM_DEBUG)
-   end
+   cfg.rvfi_cfg.nret = RTLCVA6Cfg.NrCommitPorts;
 
    if (cfg.enabled) begin
       void'(uvm_config_db#(uvme_cva6_cntxt_c)::get(this, "", "cntxt", cntxt));
@@ -179,7 +175,10 @@ function void uvme_cva6_env_c::build_phase(uvm_phase phase);
          cntxt = uvme_cva6_cntxt_c::type_id::create("cntxt");
       end
 
-      cntxt.axi_cntxt.mem = cntxt.mem;
+      cntxt.axi_cntxt.mem        = cntxt.mem;
+      cntxt.interrupt_cntxt.mem  = cntxt.mem;
+      // get irq_addr ack from CVA6 UVM env
+      cfg.interrupt_cfg.irq_addr = cfg.get_irq_addr();
 
       if ($test$plusargs("tandem_enabled"))
           $value$plusargs("tandem_enabled=%b",cfg.tandem_enabled);
@@ -227,7 +226,8 @@ function void uvme_cva6_env_c::connect_phase(uvm_phase phase);
       csr_reg_predictor.map     = csr_reg_block.default_map;
       csr_reg_predictor.adapter = csr_reg_adapter;
       csr_reg_block.default_map.set_auto_predict(0);
-      isacov_agent.monitor.ap.connect(csr_reg_predictor.bus_in);
+      if (cfg.cov_model_enabled)
+         isacov_agent.monitor.ap.connect(csr_reg_predictor.bus_in);
    end
 
 endfunction: connect_phase
@@ -245,8 +245,6 @@ function void uvme_cva6_env_c::assign_cfg();
    uvm_config_db#(uvme_cva6_cfg_c)::set(this, "*", "cfg", cfg);
 
    uvm_config_db#(uvma_clknrst_cfg_c)::set(this, "*clknrst_agent", "cfg", cfg.clknrst_cfg);
-
-   uvm_config_db#(uvma_cvxif_cfg_c)::set(this, "*cvxif_agent", "cfg", cfg.cvxif_cfg);
 
    uvm_config_db#(uvma_axi_cfg_c)::set(this, "*axi_agent", "cfg", cfg.axi_cfg);
 
@@ -278,7 +276,6 @@ endfunction: assign_cntxt
 function void uvme_cva6_env_c::create_agents();
 
    clknrst_agent = uvma_clknrst_agent_c::type_id::create("clknrst_agent", this);
-   cvxif_agent   = uvma_cvxif_agent_c::type_id::create("cvxif_agent", this);
    axi_agent     = uvma_axi_agent_c::type_id::create("axi_agent", this);
    core_cntrl_agent = uvma_cva6_core_cntrl_agent_c::type_id::create("core_cntrl_agent", this);
    rvfi_agent    = uvma_rvfi_agent_c#(ILEN,XLEN)::type_id::create("rvfi_agent", this);
@@ -296,6 +293,9 @@ function void uvme_cva6_env_c::create_env_components();
 
    if (cfg.scoreboard_enabled) begin
       predictor = uvme_cva6_prd_c::type_id::create("predictor", this);
+   end
+
+   if (cfg.scoreboard_enabled || cfg.tandem_enabled) begin
       sb        = uvme_cva6_sb_c ::type_id::create("sb"       , this);
    end
 
@@ -327,6 +327,13 @@ function void uvme_cva6_env_c::retrieve_vif();
       axi_switch_vif.active <= 1;
    end
 
+   if (!uvm_config_db#(virtual uvma_debug_if)::get(this, "", "debug_vif", debug_vif)) begin
+      `uvm_fatal("VIF", $sformatf("Could not find vif handle of type %s in uvm_config_db", $typename(debug_vif)))
+   end
+   else begin
+      cntxt.debug_vif = debug_vif;
+      `uvm_info("VIF", $sformatf("Found vif handle of type %s in uvm_config_db", $typename(debug_vif)), UVM_DEBUG)
+   end
 endfunction : retrieve_vif
 
 function void uvme_cva6_env_c::connect_predictor();
@@ -361,7 +368,6 @@ endfunction: connect_scoreboard
 function void uvme_cva6_env_c::assemble_vsequencer();
 
    vsequencer.clknrst_sequencer   = clknrst_agent.sequencer;
-   vsequencer.cvxif_vsequencer    = cvxif_agent.vsequencer;
    vsequencer.axi_vsequencer      = axi_agent.vsequencer;
    vsequencer.interrupt_sequencer      = interrupt_agent.sequencer;
 
@@ -371,12 +377,6 @@ endfunction: assemble_vsequencer
 task uvme_cva6_env_c::run_phase(uvm_phase phase);
 
    fork
-
-      begin
-            uvme_cvxif_vseq_c        cvxif_vseq;
-            cvxif_vseq = uvme_cvxif_vseq_c::type_id::create("cvxif_vseq");
-            cvxif_vseq.start(cvxif_agent.vsequencer);
-      end
 
       begin
          if(cfg.axi_cfg.is_active == UVM_ACTIVE) begin
@@ -398,28 +398,25 @@ endtask
 
 function void uvme_cva6_env_c::connect_coverage_model();
 
-   if (cfg.cvxif_cfg.cov_model_enabled) begin
-      cvxif_agent.monitor.req_ap.connect(cov_model.cvxif_covg.req_item_fifo.analysis_export);
-   end
    if (cfg.isacov_cfg.cov_model_enabled) begin
       isacov_agent.monitor.ap.connect(cov_model.isa_covg.mon_trn_fifo.analysis_export);
       isacov_agent.monitor.ap.connect(cov_model.illegal_covg.mon_trn_fifo.analysis_export);
       isacov_agent.monitor.ap.connect(cov_model.exception_covg.mon_trn_fifo.analysis_export);
+      rvfi_agent.rvfi_core_ap.connect(isacov_agent.monitor.rvfi_instr_imp);
    end
 
    clknrst_agent.mon_ap.connect(cov_model.reset_export);
-   rvfi_agent.rvfi_core_ap.connect(isacov_agent.monitor.rvfi_instr_imp);
 
    if(cfg.axi_cfg.cov_model_enabled) begin
-      axi_agent.monitor.m_axi_superset_write_rsp_packets_collected.connect(cov_model.axi_covg.uvme_axi_cov_b_resp_fifo.analysis_export);
-      axi_agent.monitor.m_axi_superset_read_rsp_packets_collected .connect(cov_model.axi_covg.uvme_axi_cov_r_resp_fifo.analysis_export);
-      axi_agent.monitor.m_axi_superset_read_req_packets_collected .connect(cov_model.axi_covg.uvme_axi_cov_ar_req_fifo.analysis_export);
-      axi_agent.monitor.m_axi_superset_write_req_packets_collected.connect(cov_model.axi_covg.uvme_axi_cov_aw_req_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_write_rsp_packets_collected.connect(cov_model.axi_covg.uvme_axi_cov_b_resp_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_read_rsp_packets_collected .connect(cov_model.axi_covg.uvme_axi_cov_r_resp_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_read_req_packets_collected .connect(cov_model.axi_covg.uvme_axi_cov_ar_req_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_write_req_packets_collected.connect(cov_model.axi_covg.uvme_axi_cov_aw_req_fifo.analysis_export);
 
-      axi_agent.monitor.m_axi_superset_write_rsp_packets_collected.connect(cov_model.axi_ext_covg.uvme_axi_cov_b_resp_fifo.analysis_export);
-      axi_agent.monitor.m_axi_superset_read_rsp_packets_collected . connect(cov_model.axi_ext_covg.uvme_axi_cov_r_resp_fifo.analysis_export);
-      axi_agent.monitor.m_axi_superset_read_req_packets_collected .connect(cov_model.axi_ext_covg.uvme_axi_cov_ar_req_fifo.analysis_export);
-      axi_agent.monitor.m_axi_superset_write_req_packets_collected.connect(cov_model.axi_ext_covg.uvme_axi_cov_aw_req_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_write_rsp_packets_collected.connect(cov_model.axi_ext_covg.uvme_axi_cov_b_resp_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_read_rsp_packets_collected . connect(cov_model.axi_ext_covg.uvme_axi_cov_r_resp_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_read_req_packets_collected .connect(cov_model.axi_ext_covg.uvme_axi_cov_ar_req_fifo.analysis_export);
+      axi_agent.monitor.m_uvma_axi_write_req_packets_collected.connect(cov_model.axi_ext_covg.uvme_axi_cov_aw_req_fifo.analysis_export);
    end
 
    if(cfg.interrupt_cfg.cov_model_enabled) begin

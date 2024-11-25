@@ -31,7 +31,6 @@ class uvme_cva6_cntxt_c extends uvm_object;
 
    // Agent context handles
    uvma_clknrst_cntxt_c    clknrst_cntxt;
-   uvma_cvxif_cntxt_c      cvxif_cntxt;
    uvma_axi_cntxt_c        axi_cntxt;
    uvma_cva6_core_cntrl_cntxt_c  core_cntrl_cntxt;
    uvma_rvfi_cntxt_c       rvfi_cntxt;
@@ -39,6 +38,9 @@ class uvme_cva6_cntxt_c extends uvm_object;
 
    // Memory modelling
    rand uvml_mem_cva6      mem;
+
+   // Handle to debug_req interface
+   virtual uvma_debug_if   debug_vif;
 
    // Events
    uvm_event  sample_cfg_e;
