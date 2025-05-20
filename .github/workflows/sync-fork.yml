@@ -20,7 +20,7 @@ jobs:
         run: git remote add upstream https://github.com/openhwgroup/cva6
 
       - name: Fetch Upstream Changes
-        run: git fetch upstream master
+        run: git fetch upstream master:master
 
       - name: Give Credentials
         run: |
@@ -28,6 +28,4 @@ jobs:
             git config --global user.name "Olivier Betschi"
 
       - name: Merge Changes and Push
-        run: |
-            git rebase upstream/master
-            git push -f origin workflow_autorebase
+        run: git push origin master
