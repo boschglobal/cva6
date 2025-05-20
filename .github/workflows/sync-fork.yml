@@ -1,0 +1,33 @@
+## Adapted from : https://github.com/orgs/community/discussions/153608
+name: Sync Fork with Upstream
+on:
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Forked Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # avoid failure to push refs to dest repos by fetching all history
+          ref: workflow_autorebase
+
+      - name: Add Upstream Remote
+        run: git remote add upstream https://github.com/openhwgroup/cva6
+
+      - name: Fetch Upstream Changes
+        run: git fetch upstream master
+
+      - name: Give Credentials
+        run: |
+            git config --global user.email "olivier.betschi@fr.bosch.com"
+            git config --global user.name "Olivier Betschi"
+
+      - name: Merge Changes and Push
+        run: |
+            git rebase upstream/master
+            git push -f origin workflow_autorebase
