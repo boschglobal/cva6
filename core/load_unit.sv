@@ -107,8 +107,9 @@ module load_unit
       state_d, state_q;
 
   address_decoder_pkg::addr_dec_mode_e ld_select_mem;
-  logic dscr_req_ongoing, iscr_req_ongoing, ahbperiph_req_ongoing;
+  logic dscr_req_ongoing, iscr_req_ongoing, ahbperiph_req_ongoing, load_ongoing;
   dcache_req_i_t req_port_o;
+  dcache_req_i_t dcache_req_port;
   dcache_req_o_t req_port_i;
   logic dscr_ex_confirmed;
   logic iscr_ex_confirmed;
@@ -123,6 +124,13 @@ module load_unit
     fu_op                                operation;       // type of load
   } ldbuf_t;
 
+
+  // response FIFOs output
+   dcache_req_o_t ahbperiph_resp_fifo;
+   dcache_req_o_t iscr_resp_fifo;
+   dcache_req_o_t dscr_resp_fifo;
+   dcache_req_o_t dcache_resp_fifo;
+   
 
   // to support a throughput of one load per cycle, if the number of entries
   // of the load buffer is 1, implement a fall-through mode. This however
@@ -147,7 +155,7 @@ module load_unit
   ldbuf_t    ldbuf_rdata;
   ldbuf_id_t ldbuf_rindex;
   ldbuf_id_t ldbuf_last_id_q;
-
+  
   assign ldbuf_full = &ldbuf_valid_q;
 
   //
@@ -277,13 +285,22 @@ module load_unit
     case (state_q)
       IDLE: begin
         if (accept_req) begin
-          // start the translation process even though we do not know if the addresses match
+          // When MMU is present : start the translation process even though we do not know if the addresses match
           // this should ease timing
-          translation_req_o = 1'b1;
+          if (CVA6Cfg.MmuPresent ) begin
+             translation_req_o = 1'b1;
+          end
+       
+              
           // check if the page offset matches with a store, if it does then stall and wait
           if (!page_offset_matches_i) begin
             // make a load request to memory
-            req_port_o.data_req = 1'b1;
+            req_port_o.data_req = 1'b1;     
+          
+            // w/o MMU:  paddr==vaddr and TAG is valid immediately 
+             if (~CVA6Cfg.MmuPresent ) begin
+                req_port_o.tag_valid = 1'b1; 
+             end 
             // we got no data grant so wait for the grant before sending the tag
             if (!req_port_i.data_gnt) begin
               state_d = WAIT_GNT;
@@ -321,6 +338,11 @@ module load_unit
         translation_req_o   = 1'b1;
         // keep the request up
         req_port_o.data_req = 1'b1;
+
+        // without MMU : keep sending tag anyways
+        if (~CVA6Cfg.MmuPresent) begin
+          req_port_o.tag_valid = 1'b1;    
+        end
         // we finally got a data grant
         if (req_port_i.data_gnt) begin
           // so we send the tag in the next cycle
@@ -331,7 +353,7 @@ module load_unit
               // we got a grant and a hit on the DTLB so we can send the tag in the next cycle
               state_d  = SEND_TAG;
               pop_ld_o = 1'b1;
-              // translation valid but this is to NC and the WB is not yet empty.
+              // translation valid but this is to NC and the WB is not yet empty. 
             end else if (CVA6Cfg.NonIdemPotenceEn) begin
               state_d = ABORT_TRANSACTION_NI;
             end
@@ -346,9 +368,12 @@ module load_unit
         state_d = IDLE;
 
         if (accept_req) begin
-          // start the translation process even though we do not know if the addresses match
+          // When MMU is present : start the translation process even though we do not know if the addresses match
           // this should ease timing
-          translation_req_o = 1'b1;
+          if (CVA6Cfg.MmuPresent ) begin
+             translation_req_o = 1'b1;
+          end
+       
           // check if the page offset matches with a store, if it does stall and wait
           if (!page_offset_matches_i) begin
             // make a load request to memory
@@ -565,9 +590,12 @@ module load_unit
   end
   // end result mux fast
 
+
+
   // ------------------
   // Address Decoder
   // ------------------
+  // Uses the transaction vaddr since w/o MMU vaddr= paddr 
   if (CVA6Cfg.DataScrPresent || CVA6Cfg.InstrScrPresent || CVA6Cfg.AHBPeriphPresent) begin : gen_address_decoder
     address_decoder #(
         .CVA6Cfg    (CVA6Cfg),
@@ -576,7 +604,7 @@ module load_unit
     ) i_address_decoder_load (
         .clk_i           (clk_i),
         .rst_ni          (rst_ni),
-        .addr_valid_i    (lsu_ctrl_i.valid),
+        .addr_valid_i    (req_port_o.data_req),
         .addr_i          (lsu_ctrl_i.vaddr),
         .ahb_periph_en_i (1'b1),
         .dscr_en_i       (1'b1),
@@ -604,28 +632,170 @@ module load_unit
       assign ahbperiph_ex_confirmed = '0;
     end
 
+
+logic iscr_fifo_empty,ahbperiph_fifo_empty,dcache_fifo_empty, dscr_fifo_empty;
+logic pop_iscr_fifo,pop_ahbperiph_fifo,pop_dcache_fifo, pop_dscr_fifo;
+
+logic [1:0] fifo_arbit_sel;
+
+localparam ISCR_FIFO_IDX      = 2'b11;
+localparam AHBPERIPH_FIFO_IDX = 2'b10;
+localparam DCACHE_FIFO_IDX    = 2'b01;
+localparam DSCR_FIFO_IDX      = 2'b00;
+
+
+  // Cache response FIFO 
+  fifo_v3 #(
+      .FALL_THROUGH(1),  //data_o ready and pop in the same cycle
+      .DATA_WIDTH(64),
+      .DEPTH(2), 
+      .dtype(dcache_req_o_t)
+  ) dcache_fifo (  
+      .clk_i(clk_i),
+      .rst_ni(rst_ni),
+      .flush_i(1'b0),
+      .testmode_i(1'b0),
+      .full_o(),   // should not happen
+      .empty_o(dcache_fifo_empty), 
+      .usage_o(),
+      .data_i(dcache_req_port_i),
+      .push_i(dcache_req_port_i.data_rvalid),
+      .data_o(dcache_resp_fifo),
+      .pop_i(pop_dcache_fifo & ~dcache_fifo_empty)
+  );
+ 
+
+  
+  // DSCR  response FIFO 
+  fifo_v3 #(
+      .FALL_THROUGH(1),  //data_o ready and pop in the same cycle
+      .DATA_WIDTH(0),    // unused w. custom datatype
+      .DEPTH(2), 
+      .dtype(dcache_req_o_t)
+  ) dscr_fifo (  
+      .clk_i(clk_i),
+      .rst_ni(rst_ni),
+      .flush_i(1'b0),
+      .testmode_i(1'b0),
+      .full_o(),   // should not happen
+      .empty_o(dscr_fifo_empty), 
+      .usage_o(),
+      .data_i(dscr_req_port_i),
+      .push_i(dscr_req_port_i.data_rvalid),
+      .data_o(dscr_resp_fifo),
+      .pop_i(pop_dscr_fifo & ~dscr_fifo_empty)
+  );
+ 
+  
+  // ISCR  response FIFO 
+  fifo_v3 #(
+      .FALL_THROUGH(1),  //data_o ready and pop in the same cycle
+      .DATA_WIDTH(0),// unused w. custom datatype
+      .DEPTH(2), 
+      .dtype(dcache_req_o_t)
+  ) iscr_fifo (  
+      .clk_i(clk_i),
+      .rst_ni(rst_ni),
+      .flush_i(1'b0),
+      .testmode_i(1'b0),
+      .full_o(),   // should not happen
+      .empty_o(iscr_fifo_empty), 
+      .usage_o(),
+      .data_i(iscr_req_port_i),
+      .push_i(iscr_req_port_i.data_rvalid),
+      .data_o(iscr_resp_fifo),
+      .pop_i(pop_iscr_fifo & ~iscr_fifo_empty)
+  );
+ 
+
+ 
+ // AHBPeriph response FIFO
+   fifo_v3 #(
+      .FALL_THROUGH(1),  //data_o ready and pop in the same cycle
+      .DATA_WIDTH(0),    // unused w. custom datatype
+      .DEPTH(2), 
+      .dtype(dcache_req_o_t)
+  ) ahbperiph_fifo (  
+      .clk_i(clk_i),
+      .rst_ni(rst_ni),
+      .flush_i(1'b0),
+      .testmode_i(1'b0),
+      .full_o(),   // should not happen
+      .empty_o(ahbperiph_fifo_empty), 
+      .usage_o(),
+      .data_i(ahbperiph_req_port_i),
+      .push_i(ahbperiph_req_port_i.data_rvalid),
+      .data_o(ahbperiph_resp_fifo),
+      .pop_i(pop_ahbperiph_fifo & ~ahbperiph_fifo_empty)
+  );
+ 
+
+ 
+ 
+  // round robin arbiter, comming from PULP platform
+  rr_arb_tree #(
+      .NumIn    (4),
+      .DataType (logic),
+      .AxiVldRdy(1'b1)
+  ) arbiter (
+      .clk_i(clk_i),
+      .rst_ni(rst_ni),
+      .flush_i(1'b0),
+      .rr_i(2'b00),
+      .req_i({~iscr_fifo_empty,~ahbperiph_fifo_empty,~dcache_fifo_empty, ~dscr_fifo_empty}),  // result valid from coprocessors
+      .gnt_o({pop_iscr_fifo,   pop_ahbperiph_fifo,    pop_dcache_fifo,    pop_dscr_fifo}),  // result ready for coprocressors
+      .data_i(1'b0),              // routed externally (below)
+      .req_o(req_port_i.data_rvalid ),  // result valid 
+      .gnt_i(1'b1),  // load unit output always ready 
+      .data_o(),     // x_result for CV-X-IF
+      .idx_o(fifo_arbit_sel) // could be useful if commit handling is changed by using a scoreboard instead of sfifo + filter after decoder, it give the index of the input that is sending it result
+  );
+ 
+
+// FIFO output selection according to arbiter
     always_comb begin : resp_dispatch
-      if (dscr_req_port_i.data_rvalid || dscr_req_port_i.data_gnt) begin
-        req_port_i = dscr_req_port_i;
-      end else if (iscr_req_port_i.data_rvalid || iscr_req_port_i.data_gnt) begin
-        req_port_i = iscr_req_port_i;
-      end else if (ahbperiph_req_port_i.data_rvalid || ahbperiph_req_port_i.data_gnt) begin
-        req_port_i = ahbperiph_req_port_i;
-      end else begin
-        req_port_i = dcache_req_port_i;
+      if (fifo_arbit_sel==DSCR_FIFO_IDX) begin     
+           req_port_i.data_rid     = dscr_resp_fifo.data_rid     ;
+           req_port_i.data_ruser   = dscr_resp_fifo.data_ruser   ;
+           req_port_i.data_rdata   = dscr_resp_fifo.data_rdata   ;
+     
+     end else if (fifo_arbit_sel==ISCR_FIFO_IDX) begin 
+           req_port_i.data_rid     = iscr_resp_fifo.data_rid     ;
+           req_port_i.data_ruser   = iscr_resp_fifo.data_ruser   ;
+           req_port_i.data_rdata   = iscr_resp_fifo.data_rdata   ;
+          
+     end else if (fifo_arbit_sel==AHBPERIPH_FIFO_IDX) begin  
+           req_port_i.data_rid     = ahbperiph_resp_fifo.data_rid     ;
+           req_port_i.data_ruser   = ahbperiph_resp_fifo.data_ruser   ;
+           req_port_i.data_rdata   = ahbperiph_resp_fifo.data_rdata   ;             
+ 
+      end else begin // dcache by default
+           req_port_i.data_rid     = dcache_resp_fifo.data_rid     ;
+           req_port_i.data_ruser   = dcache_resp_fifo.data_ruser   ;
+           req_port_i.data_rdata   = dcache_resp_fifo.data_rdata   ;
       end
     end
 
+ assign req_port_i.data_gnt =dscr_req_port_i.data_gnt || iscr_req_port_i.data_gnt || ahbperiph_req_port_i.data_gnt || dcache_req_port_i.data_gnt;
+
+  
+
+
+
+
+    // Only keep 1 request at the time to be sure response are neither
+    // simultaneous or out of order
     always_comb begin : req_dispatch
       dscr_req_port_o      = '0;
       iscr_req_port_o      = '0;
       ahbperiph_req_port_o = '0;
-      dcache_req_port_o    = '0;
+      dcache_req_port      = '0; 
+
 
       unique if (ld_select_mem == address_decoder_pkg::DECODER_MODE_DSCR) begin
         dscr_req_port_o.vaddr      = lsu_ctrl_i.vaddr;
         dscr_req_port_o.data_wdata = req_port_o.data_wdata;
-        dscr_req_port_o.data_req   = req_port_o.data_req;
+        dscr_req_port_o.data_req   = req_port_o.data_req & ~load_ongoing;
         dscr_req_port_o.data_we    = req_port_o.data_we;
         dscr_req_port_o.data_be    = req_port_o.data_be;
         dscr_req_port_o.data_size  = req_port_o.data_size;
@@ -634,7 +804,7 @@ module load_unit
       end else if (ld_select_mem == address_decoder_pkg::DECODER_MODE_ISCR) begin
         iscr_req_port_o.vaddr      = lsu_ctrl_i.vaddr;
         iscr_req_port_o.data_wdata = req_port_o.data_wdata;
-        iscr_req_port_o.data_req   = req_port_o.data_req;
+        iscr_req_port_o.data_req   = req_port_o.data_req & ~load_ongoing;
         iscr_req_port_o.data_we    = req_port_o.data_we;
         iscr_req_port_o.data_be    = req_port_o.data_be;
         iscr_req_port_o.data_size  = req_port_o.data_size;
@@ -643,16 +813,58 @@ module load_unit
       end else if (ld_select_mem == address_decoder_pkg::DECODER_MODE_AHB_PERIPH) begin
         ahbperiph_req_port_o.vaddr      = lsu_ctrl_i.vaddr;
         ahbperiph_req_port_o.data_wdata = req_port_o.data_wdata;
-        ahbperiph_req_port_o.data_req   = req_port_o.data_req;
+        ahbperiph_req_port_o.data_req   = req_port_o.data_req & ~load_ongoing;
         ahbperiph_req_port_o.data_we    = req_port_o.data_we;
         ahbperiph_req_port_o.data_be    = req_port_o.data_be;
         ahbperiph_req_port_o.data_size  = req_port_o.data_size;
         ahbperiph_req_port_o.data_id    = req_port_o.data_id;
         ahbperiph_req_port_o.kill_req   = req_port_o.kill_req;
       end else if (ld_select_mem == address_decoder_pkg::DECODER_MODE_CACHE) begin
-        dcache_req_port_o = req_port_o;
+        dcache_req_port   = req_port_o;
       end
     end
+
+
+  // D$ request dispatch : 
+  //  - when MMU is present, the index is sent at the 1st cycle, then the tag is registered by the MMU and sent when avaialble 
+  //  - when MMU is absent , the address tag is registered below 
+
+logic [CVA6Cfg.DCACHE_TAG_WIDTH-1:0]  address_tag_q ;
+logic                                 tag_valid_q   ;
+
+ always_ff @(posedge clk_i or negedge rst_ni) begin
+      if (~rst_ni) begin
+        tag_valid_q  <=  'b0;
+        address_tag_q <= 'b0;
+      end else begin
+        tag_valid_q  <=  dcache_req_port.tag_valid  ;
+        address_tag_q <= lsu_ctrl_i.vaddr [CVA6Cfg.DCACHE_TAG_WIDTH+CVA6Cfg.DCACHE_INDEX_WIDTH-1 - (CVA6Cfg.PLEN-CVA6Cfg.VLEN) : CVA6Cfg.DCACHE_INDEX_WIDTH];        
+      end 
+  end 
+     
+  always_comb begin : dcache_deq_dispatch
+  if (CVA6Cfg.MmuPresent) begin 
+   dcache_req_port_o= dcache_req_port ;
+  end
+  else begin
+   dcache_req_port_o.tag_valid        =  tag_valid_q;    
+   dcache_req_port_o.kill_req         =  dcache_req_port.kill_req   ;  
+   dcache_req_port_o.data_id          =  dcache_req_port.data_id    ;  
+   dcache_req_port_o.data_size        =  dcache_req_port.data_size ;   
+   dcache_req_port_o.data_be          =  dcache_req_port.data_be   ;   
+   dcache_req_port_o.data_we          =  dcache_req_port.data_we   ;   
+   dcache_req_port_o.data_req         =  dcache_req_port.data_req   ;  
+   dcache_req_port_o.data_wuser       =  dcache_req_port.data_wuser ;  
+   dcache_req_port_o.data_wdata       =  dcache_req_port.data_wdata ;  
+   dcache_req_port_o.address_tag      =  address_tag_q;  
+   dcache_req_port_o.address_index    =  dcache_req_port.address_index;
+   end
+  end 
+
+
+
+
+    assign load_ongoing = dscr_req_ongoing | iscr_req_ongoing | ahbperiph_req_ongoing;
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (~rst_ni) begin
@@ -662,17 +874,17 @@ module load_unit
       end else begin
         if (dscr_req_port_i.data_gnt) begin
           dscr_req_ongoing <= 1'b1;
-        end else if (dscr_req_port_i.data_rvalid) begin
+        end else if (dscr_req_port_i.data_rvalid || dscr_req_port_o.kill_req == 1'b1) begin
           dscr_req_ongoing <= 1'b0;
         end
         if (iscr_req_port_i.data_gnt) begin
           iscr_req_ongoing <= 1'b1;
-        end else if (iscr_req_port_i.data_rvalid) begin
+        end else if (iscr_req_port_i.data_rvalid || iscr_req_port_o.kill_req == 1'b1) begin
           iscr_req_ongoing <= 1'b0;
         end
         if (ahbperiph_req_port_i.data_gnt) begin
           ahbperiph_req_ongoing <= 1'b1;
-        end else if (ahbperiph_req_port_i.data_rvalid) begin
+        end else if (ahbperiph_req_port_i.data_rvalid || ahbperiph_req_port_o.kill_req == 1'b1) begin
           ahbperiph_req_ongoing <= 1'b0;
         end
       end
@@ -713,6 +925,17 @@ module load_unit
   assert property (@(posedge clk_i) disable iff (~rst_ni)
         ldbuf_w |->  (ldbuf_wdata.operation inside {ariane_pkg::LB, ariane_pkg::LBU}) |-> ldbuf_wdata.address_offset < 8)
   else $fatal(1, "invalid address offset used with {LB, LBU}");
+
+  //assert property (
+  // @(posedge clk_i) disable iff (~rst_ni)
+  //  $onehot({
+  //    dscr_req_port_i.data_rvalid,
+  //    iscr_req_port_i.data_rvalid,
+  //    ahbperiph_req_port_i.data_rvalid,
+  //    dcache_req_port_i.data_rvalid
+  //     })
+  //   ) else $fatal("Simulatanous ISCR, DSCR, Periph bus, or D cache data returned !");
+
 `endif
   //pragma translate_on
 

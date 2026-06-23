@@ -54,7 +54,6 @@ module iscr_controller
   logic [                  1:0] arb_idx;
   logic                         arb_idx_valid;
   logic ahb_read_ongoing, load_ongoing, frontend_ongoing;
-  logic ahb_store_ready_o;
   // AHB slave adapter signals
   scratchpad_req_i_t ahb_req_port_o;
   dcache_req_o_t ahb_req_port_i;
@@ -136,11 +135,6 @@ module iscr_controller
         st_ready_o <= '1;
       end else begin
         st_ready_o <= '0;
-      end
-      if ((arb_idx == DSCR_ARBIT_AHB) && arb_idx_valid && sram_resp_gnt) begin
-        ahb_store_ready_o <= '1;
-      end else begin
-        ahb_store_ready_o <= '0;
       end
     end
   end
@@ -233,10 +227,10 @@ module iscr_controller
   // arb_idx must be stable when SRAM is sending the read_data, even if the data_req signal is low
   // Therefore the arb_req must stay high one cycle more
   // This concerns only read request, not write
-  assign arb_req[ISCR_ARBIT_LOAD] = ld_req_port_i.data_req || load_ongoing;
+  assign arb_req[ISCR_ARBIT_LOAD] = (ld_req_port_i.data_req || load_ongoing) && ~(frontend_ongoing || ahb_read_ongoing);
   assign arb_req[ISCR_ARBIT_STORE] = st_req_port_i.data_req;
-  assign arb_req[ISCR_ARBIT_AHB] = ahb_req_port_o.data_req || ahb_read_ongoing;
-  assign arb_req[ISCR_ARBIT_FRONTEND] = if_dreq_i.req || frontend_ongoing;
+  assign arb_req[ISCR_ARBIT_AHB] = (ahb_req_port_o.data_req || ahb_read_ongoing)  && ~(frontend_ongoing || load_ongoing);
+  assign arb_req[ISCR_ARBIT_FRONTEND] = (if_dreq_i.req || frontend_ongoing) && ~(ahb_read_ongoing || load_ongoing);
   assign arb_gnt = (st_ready_o || sram_resp_rdata_valid || (ahb_req_port_o.data_req && ahb_req_port_o.data_we && sram_resp_gnt)  );
 
   always_ff @(posedge clk_i or negedge rst_ni) begin

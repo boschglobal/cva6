@@ -17,10 +17,10 @@ module ahb_peripheral_bus_controller
     parameter type ahb_req_t = logic
 ) (
     input logic clk_i,  // Clock
-    input logic rst_ni,  // Asynchronous reset active low
+    input logic rst_ni, // Asynchronous reset active low
     // AHB Master Interface
-    input ahb_resp_t ahb_p_resp_i,
-    output ahb_req_t ahb_p_req_o,
+    input  ahb_resp_t ahb_p_resp_i,
+    output ahb_req_t  ahb_p_req_o,
 
     // LSU (Load Unit) interface
     input  scratchpad_req_i_t ld_req_port_i,
@@ -33,22 +33,23 @@ module ahb_peripheral_bus_controller
 );
   // Arbitrer signals
   localparam int unsigned NumberArbiterInputs = 2;
-  typedef enum logic {
-    ARBIT_LOAD,
-    ARBIT_STORE
-  } ahb_arb_e;
+  localparam logic ARBIT_LOAD = 1'b0;
+  localparam logic ARBIT_STORE = 1'b1;
   logic [1:0] arb_req, arb_gnt_o;
-  ahb_arb_e                arb_idx;
-  logic                    arb_req_done;
-  logic                    arb_idx_valid;
+  logic arb_idx;
+  logic arb_req_done;
+  logic              arb_idx_valid;
   scratchpad_req_i_t [1:0] arb_data_i;
-  logic load_ongoing, store_ongoing;
+  logic              load_ongoing, store_ongoing;
 
   // AHB adapter signals
   scratchpad_req_i_t adapter_req_port_i;
   dcache_req_o_t     adapter_req_port_o;
   logic              adapter_ex_o;
   logic              adapter_transfer_complete;
+
+
+  logic [CVA6Cfg.DcacheIdWidth-1:0]     data_id_q;
 
 
   // -------------------
@@ -62,16 +63,30 @@ module ahb_peripheral_bus_controller
       .ahb_resp_t(ahb_resp_t),
       .ahb_req_t(ahb_req_t)
   ) i_ahb_master_adapter (
-      .clk_i                    (clk_i),
-      .rst_ni                   (rst_ni),
-      .ahb_p_resp_i             (ahb_p_resp_i),
-      .ahb_p_req_o              (ahb_p_req_o),
-      .req_port_i               (adapter_req_port_i),
-      .req_port_o               (adapter_req_port_o),
-      .adapter_transfer_complete(adapter_transfer_complete),
-      .ex_o                     (adapter_ex_o)
+      .clk_i        (clk_i),
+      .rst_ni       (rst_ni),
+      .ahb_p_resp_i (ahb_p_resp_i),
+      .ahb_p_req_o  (ahb_p_req_o),
+      .req_port_i   (adapter_req_port_i),
+      .req_port_o   (adapter_req_port_o),
+      .adapter_transfer_complete (adapter_transfer_complete),
+      .ex_o         (adapter_ex_o)
   );
 
+
+  // -------------------
+  // reqd request data ID memory
+  // -------------------
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (~rst_ni) begin
+      data_id_q <= '0;
+    end else begin
+      if (ld_req_port_i.data_req) begin
+           data_id_q <= ld_req_port_i.data_id; 
+      end
+    end
+  end
 
   // -------------------
   // Load / Store arbit
@@ -89,21 +104,21 @@ module ahb_peripheral_bus_controller
       ld_req_port_o.data_rvalid = adapter_req_port_o.data_rvalid;
       ld_req_port_o.data_rdata  = adapter_req_port_o.data_rdata;
       ld_req_port_o.data_gnt    = adapter_req_port_o.data_gnt;
-      ld_req_port_o.data_rid    = '0;
+      ld_req_port_o.data_rid    = data_id_q;    // send memorized data ID
       ld_req_port_o.data_ruser  = '0;
       ld_ex_o                   = adapter_ex_o;
       st_ex_o                   = '0;
       st_ready_o                = '0;
     end else if (arb_idx == ARBIT_STORE && arb_idx_valid) begin
-      st_ex_o       = adapter_ex_o;
-      ld_req_port_o = '0;
-      ld_ex_o       = '0;
-      st_ready_o    = adapter_req_port_o.data_gnt;
+      st_ex_o              = adapter_ex_o;
+      ld_req_port_o        = '0;
+      ld_ex_o              = '0;
+      st_ready_o           = adapter_transfer_complete;
     end else begin
-      st_ex_o       = '0;
-      ld_req_port_o = '0;
-      ld_ex_o       = '0;
-      st_ready_o    = '0;
+      st_ex_o              = '0;
+      ld_req_port_o        = '0;
+      ld_ex_o              = '0;
+      st_ready_o                = '0;
     end
   end
 
@@ -140,15 +155,15 @@ module ahb_peripheral_bus_controller
   end
 
   assign arb_req[ARBIT_LOAD] = ld_req_port_i.data_req || load_ongoing;
-  assign arb_req[ARBIT_STORE] = st_req_port_i.data_req || store_ongoing;
+  assign arb_req[ARBIT_STORE] = st_req_port_i.data_req;
   assign arb_data_i[ARBIT_LOAD] = ld_req_port_i;
   assign arb_data_i[ARBIT_STORE] = st_req_port_i;
   assign arb_req_done = adapter_transfer_complete;
 
   rr_arb_tree #(
-      .NumIn   (NumberArbiterInputs),
+      .NumIn    (NumberArbiterInputs),
       .DataType(scratchpad_req_i_t),
-      .LockIn  (1'b1)
+      .LockIn   (1'b1)
   ) i_rr_arb_tree (
       .clk_i  (clk_i),
       .rst_ni (rst_ni),

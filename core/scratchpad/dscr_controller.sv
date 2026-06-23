@@ -48,7 +48,6 @@ module dscr_controller
   logic [$clog2(ISCR_ARBIT_NUM_IN)-1:0] arb_idx;
   logic                                 arb_idx_valid;
   logic ahb_read_ongoing, load_ongoing;
-  logic ahb_store_ready_o;
   // AHB slave adapter signals
   scratchpad_req_i_t ahb_req_port_o;
   dcache_req_o_t ahb_req_port_i;
@@ -125,17 +124,11 @@ module dscr_controller
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (~rst_ni) begin
       st_ready_o <= '0;
-      ahb_store_ready_o <= '0;
     end else begin
       if ((arb_idx == DSCR_ARBIT_STORE) && arb_idx_valid && sram_resp_gnt) begin
         st_ready_o <= '1;
       end else begin
         st_ready_o <= '0;
-      end
-      if ((arb_idx == DSCR_ARBIT_AHB) && arb_idx_valid && sram_resp_gnt) begin
-        ahb_store_ready_o <= '1;
-      end else begin
-        ahb_store_ready_o <= '0;
       end
     end
   end
