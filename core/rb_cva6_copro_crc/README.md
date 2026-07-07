@@ -16,10 +16,7 @@ The design flow is also run on the copro from this repository, if needed.
 
 This repository is structured according to the standard EIY folder structure :
 * rtl_v : contains RTL files
-* test_c : contains C files used for tests **(To be filled)**
-* tb_v : contains testbench files **(To be filled)**
-* scripts : Makefiles to run the testbenches **(To be filled)**
-* saxo : Makefile and setup scripts for packaging with the SAXO tool, in particular for xcelium_check **(To be filled)**
+
 
 ## Links and resources <a name="links-resources"></a>
 * [EU TRISTAN project description](https://cordis.europa.eu/project/id/101095947)
